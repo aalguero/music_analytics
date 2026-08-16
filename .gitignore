@@ -1,0 +1,21 @@
+# Local secrets — never commit real credentials, only .env.example
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+build/
+dist/
+
+# MusicBrainz source dump + cloned importer tooling (large, re-fetchable)
+data/
+musicbrainz-server/
+
+# Auto-generated semantic models — regenerate on demand from introspect.py
+semantic/generated/
+
+# Editors / OS
+.vscode/
+.DS_Store

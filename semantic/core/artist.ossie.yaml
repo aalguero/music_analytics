@@ -1,0 +1,177 @@
+# Ossie semantic model for MusicBrainz artists.
+#
+# Also owns `artist_credit` / `artist_credit_name` here rather than in their
+# own file: every recording/release/release_group is attributed to an artist
+# through this bridge (a single "artist credit" can list multiple artists,
+# e.g. a feature), so it belongs conceptually with the artist entity even
+# though release.ossie.yaml, recording.ossie.yaml, etc. each add a
+# relationship pointing at it. Our semantic_catalog.py loader merges all
+# *.ossie.yaml files into one namespace before resolving relationships, so
+# these cross-file references are expected, not a validation gap.
+version: "0.2.0.dev0"
+semantic_model:
+  - name: musicbrainz_artist
+    description: Artists (musicians, groups, and other music professionals) and how they're credited on releases/recordings/works.
+    ai_context:
+      instructions: >
+        Use this model for questions about artists/bands/musicians themselves
+        (bios, dates, area), and for resolving "who performed/released X" via
+        artist_credit -> artist_credit_name -> artist.
+      synonyms: ["musician", "band", "performer", "act"]
+
+    datasets:
+      - name: artist
+        source: musicbrainz.musicbrainz.artist
+        primary_key: [id]
+        unique_keys: [[gid]]
+        description: A person or group who creates or performs music.
+        ai_context:
+          synonyms: ["musician", "band", "performer"]
+        fields:
+          - name: id
+            expression: {dialects: [{dialect: ANSI_SQL, expression: id}]}
+            datatype: Integer
+          - name: gid
+            expression: {dialects: [{dialect: ANSI_SQL, expression: gid}]}
+            datatype: String
+            description: Public MusicBrainz identifier (MBID) for this artist.
+            ai_context: {synonyms: ["MBID", "musicbrainz id"]}
+          - name: name
+            expression: {dialects: [{dialect: ANSI_SQL, expression: name}]}
+            datatype: String
+          - name: sort_name
+            expression: {dialects: [{dialect: ANSI_SQL, expression: sort_name}]}
+            datatype: String
+            description: "Name reordered for alphabetical sorting, e.g. 'Beatles, The'."
+          - name: comment
+            expression: {dialects: [{dialect: ANSI_SQL, expression: comment}]}
+            datatype: String
+            description: Short disambiguation comment shown when multiple artists share a name.
+            ai_context: {synonyms: ["disambiguation"]}
+          - name: begin_date_year
+            expression: {dialects: [{dialect: ANSI_SQL, expression: begin_date_year}]}
+            datatype: Integer
+            dimension: {is_time: true}
+            description: Year the artist was born, or the group was formed.
+            ai_context: {synonyms: ["formed", "born", "founded"]}
+          - name: end_date_year
+            expression: {dialects: [{dialect: ANSI_SQL, expression: end_date_year}]}
+            datatype: Integer
+            dimension: {is_time: true}
+            description: Year the artist died, or the group disbanded. Null if still active.
+            ai_context: {synonyms: ["died", "disbanded", "split up"]}
+          - name: ended
+            expression: {dialects: [{dialect: ANSI_SQL, expression: ended}]}
+            datatype: Boolean
+            description: True if the artist/group is no longer active.
+          # `type`, `area`, `gender`, `begin_area`, `end_area` are all foreign
+          # keys into small vocabulary/area tables not curated in this core
+          # model — Stage 3's introspection tool auto-generates datasets for
+          # them (artist_type, area, gender) so joins remain possible without
+          # us hand-authoring every lookup table.
+          - name: type
+            expression: {dialects: [{dialect: ANSI_SQL, expression: type}]}
+            datatype: Integer
+            description: "Foreign key into artist_type (e.g. Person, Group) — see auto-generated artist_type dataset."
+          - name: area
+            expression: {dialects: [{dialect: ANSI_SQL, expression: area}]}
+            datatype: Integer
+            description: "Foreign key into area (country/region the artist is primarily associated with) — see auto-generated area dataset."
+          - name: gender
+            expression: {dialects: [{dialect: ANSI_SQL, expression: gender}]}
+            datatype: Integer
+            description: "Foreign key into gender — see auto-generated gender dataset."
+
+      - name: artist_credit
+        source: musicbrainz.musicbrainz.artist_credit
+        primary_key: [id]
+        description: >
+          One "credit line" as it appears on a release/recording/work, e.g.
+          "Artist A feat. Artist B" — resolved into individual artists via
+          artist_credit_name.
+        fields:
+          - name: id
+            expression: {dialects: [{dialect: ANSI_SQL, expression: id}]}
+            datatype: Integer
+          - name: name
+            expression: {dialects: [{dialect: ANSI_SQL, expression: name}]}
+            datatype: String
+            description: The full credit string as displayed, e.g. "Artist A feat. Artist B".
+          - name: artist_count
+            expression: {dialects: [{dialect: ANSI_SQL, expression: artist_count}]}
+            datatype: Integer
+            description: Number of distinct artists in this credit.
+
+      - name: artist_credit_name
+        source: musicbrainz.musicbrainz.artist_credit_name
+        primary_key: [artist_credit, position]
+        description: One (artist, position) row within an artist_credit — the join table resolving credits to individual artists.
+        fields:
+          - name: artist_credit
+            expression: {dialects: [{dialect: ANSI_SQL, expression: artist_credit}]}
+            datatype: Integer
+          - name: position
+            expression: {dialects: [{dialect: ANSI_SQL, expression: "\"position\""}]}
+            datatype: Integer
+            description: Order of this artist within the credit (0-based).
+          - name: artist
+            expression: {dialects: [{dialect: ANSI_SQL, expression: artist}]}
+            datatype: Integer
+          - name: join_phrase
+            expression: {dialects: [{dialect: ANSI_SQL, expression: join_phrase}]}
+            datatype: String
+            description: "Text joining this artist to the next, e.g. ' feat. ' or ' & '."
+
+      - name: artist_alias
+        source: musicbrainz.musicbrainz.artist_alias
+        primary_key: [id]
+        description: >
+          Alternate names for an artist — legal name, stylization variants,
+          transliterations, common misspellings, etc. Found necessary in
+          practice: MusicBrainz's canonical artist.name is often an unusual
+          stylization (e.g. "Run‐D.M.C." with a Unicode hyphen and periods)
+          that doesn't match how people actually search, while the commonly
+          recognized form ("Run-DMC") is stored here as an alias instead.
+        ai_context:
+          instructions: >
+            If a name search against artist.name (even with ILIKE) returns
+            nothing, search artist_alias.name instead before concluding the
+            artist doesn't exist.
+          synonyms: ["also known as", "aka", "stage name variant"]
+        fields:
+          - name: id
+            expression: {dialects: [{dialect: ANSI_SQL, expression: id}]}
+            datatype: Integer
+          - name: artist
+            expression: {dialects: [{dialect: ANSI_SQL, expression: artist}]}
+            datatype: Integer
+          - name: name
+            expression: {dialects: [{dialect: ANSI_SQL, expression: name}]}
+            datatype: String
+          - name: primary_for_locale
+            expression: {dialects: [{dialect: ANSI_SQL, expression: primary_for_locale}]}
+            datatype: Boolean
+
+    relationships:
+      - name: artist_credit_name_to_artist_credit
+        from: artist_credit_name
+        to: artist_credit
+        from_columns: [artist_credit]
+        to_columns: [id]
+      - name: artist_credit_name_to_artist
+        from: artist_credit_name
+        to: artist
+        from_columns: [artist]
+        to_columns: [id]
+      - name: artist_alias_to_artist
+        from: artist_alias
+        to: artist
+        from_columns: [artist]
+        to_columns: [id]
+
+    metrics:
+      - name: artist_count
+        expression: {dialects: [{dialect: ANSI_SQL, expression: "COUNT(DISTINCT artist.id)"}]}
+        description: Total number of distinct artists.
+        datatype: Integer
+        ai_context: {synonyms: ["number of artists", "how many artists"]}

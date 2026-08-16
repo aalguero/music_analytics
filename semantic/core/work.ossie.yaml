@@ -1,0 +1,101 @@
+# A `work` is the abstract composition (e.g. a song as written), distinct
+# from any particular `recording` (a performance of it). Both link tables
+# below are needed to make `work` useful for analytics: l_artist_work says
+# who composed/wrote it, l_recording_work says which recordings perform it.
+version: "0.2.0.dev0"
+semantic_model:
+  - name: musicbrainz_work
+    description: Works (abstract compositions, e.g. a song or piece as written) and their composers/writers and performing recordings.
+    ai_context:
+      instructions: >
+        Use this for questions about compositions/songwriting credits as
+        distinct from any specific recorded performance. "Who wrote X" joins
+        through l_artist_work; "which recordings perform X" joins through
+        l_recording_work.
+      synonyms: ["composition", "song (as written)", "musical work"]
+
+    datasets:
+      - name: work
+        source: musicbrainz.musicbrainz.work
+        primary_key: [id]
+        unique_keys: [[gid]]
+        description: An abstract musical composition, independent of any specific recording of it.
+        fields:
+          - name: id
+            expression: {dialects: [{dialect: ANSI_SQL, expression: id}]}
+            datatype: Integer
+          - name: gid
+            expression: {dialects: [{dialect: ANSI_SQL, expression: gid}]}
+            datatype: String
+            ai_context: {synonyms: ["MBID", "musicbrainz id"]}
+          - name: name
+            expression: {dialects: [{dialect: ANSI_SQL, expression: name}]}
+            datatype: String
+            ai_context: {synonyms: ["title", "song title", "composition title"]}
+          - name: comment
+            expression: {dialects: [{dialect: ANSI_SQL, expression: comment}]}
+            datatype: String
+            ai_context: {synonyms: ["disambiguation"]}
+          # `type` is a foreign key into work_type (Song, Symphony, Opera,
+          # Musical, etc.) — not curated here; picked up by Stage 3
+          # auto-generation.
+          - name: type
+            expression: {dialects: [{dialect: ANSI_SQL, expression: type}]}
+            datatype: Integer
+            description: "Foreign key into work_type (e.g. Song, Symphony, Opera)."
+
+      - name: l_artist_work
+        source: musicbrainz.musicbrainz.l_artist_work
+        primary_key: [id]
+        description: Links an artist to a work they're credited on (e.g. composer, lyricist) via the `link` table's relationship type.
+        fields:
+          - name: id
+            expression: {dialects: [{dialect: ANSI_SQL, expression: id}]}
+            datatype: Integer
+          - name: entity0
+            expression: {dialects: [{dialect: ANSI_SQL, expression: entity0}]}
+            datatype: Integer
+            description: References artist.id.
+          - name: entity1
+            expression: {dialects: [{dialect: ANSI_SQL, expression: entity1}]}
+            datatype: Integer
+            description: References work.id.
+          - name: entity0_credit
+            expression: {dialects: [{dialect: ANSI_SQL, expression: entity0_credit}]}
+            datatype: String
+            description: Name the artist is credited under for this specific relationship, if different from their usual name.
+
+      - name: l_recording_work
+        source: musicbrainz.musicbrainz.l_recording_work
+        primary_key: [id]
+        description: Links a recording to the work it performs.
+        fields:
+          - name: id
+            expression: {dialects: [{dialect: ANSI_SQL, expression: id}]}
+            datatype: Integer
+          - name: entity0
+            expression: {dialects: [{dialect: ANSI_SQL, expression: entity0}]}
+            datatype: Integer
+            description: References recording.id.
+          - name: entity1
+            expression: {dialects: [{dialect: ANSI_SQL, expression: entity1}]}
+            datatype: Integer
+            description: References work.id.
+
+    relationships:
+      - {name: l_artist_work_to_artist, from: l_artist_work, to: artist, from_columns: [entity0], to_columns: [id]}
+      - {name: l_artist_work_to_work, from: l_artist_work, to: work, from_columns: [entity1], to_columns: [id]}
+      - {name: l_recording_work_to_recording, from: l_recording_work, to: recording, from_columns: [entity0], to_columns: [id]}
+      - {name: l_recording_work_to_work, from: l_recording_work, to: work, from_columns: [entity1], to_columns: [id]}
+
+    metrics:
+      - name: work_count
+        expression: {dialects: [{dialect: ANSI_SQL, expression: "COUNT(DISTINCT work.id)"}]}
+        description: Total number of distinct works (compositions).
+        datatype: Integer
+        ai_context: {synonyms: ["number of works", "how many compositions"]}
+      - name: avg_recordings_per_work
+        expression: {dialects: [{dialect: ANSI_SQL, expression: "COUNT(DISTINCT l_recording_work.entity0)::numeric / NULLIF(COUNT(DISTINCT work.id), 0)"}]}
+        description: Average number of distinct recordings performing each work (a proxy for how often a composition has been covered/re-recorded).
+        datatype: Decimal
+        ai_context: {synonyms: ["cover count", "how many times recorded"]}

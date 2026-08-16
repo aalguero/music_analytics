@@ -1,0 +1,103 @@
+# Also owns `area` (countries/regions) here: it's needed by label.area and
+# by artist.area/begin_area/end_area (artist.ossie.yaml), and a record label
+# is the entity most naturally "located" by area for analytics purposes
+# (e.g. "labels by country"). See the cross-file note in artist.ossie.yaml.
+version: "0.2.0.dev0"
+semantic_model:
+  - name: musicbrainz_label
+    description: Record labels (the company/imprint that issues releases) and the geographic areas they and artists are associated with.
+    ai_context:
+      instructions: >
+        Use this for "which label released X" and "labels by country"
+        style questions, joined through release_label (release.ossie.yaml).
+      synonyms: ["record label", "imprint"]
+
+    datasets:
+      - name: label
+        source: musicbrainz.musicbrainz.label
+        primary_key: [id]
+        unique_keys: [[gid]]
+        description: A record label / imprint that issues releases.
+        fields:
+          - name: id
+            expression: {dialects: [{dialect: ANSI_SQL, expression: id}]}
+            datatype: Integer
+          - name: gid
+            expression: {dialects: [{dialect: ANSI_SQL, expression: gid}]}
+            datatype: String
+            ai_context: {synonyms: ["MBID", "musicbrainz id"]}
+          - name: name
+            expression: {dialects: [{dialect: ANSI_SQL, expression: name}]}
+            datatype: String
+          - name: label_code
+            expression: {dialects: [{dialect: ANSI_SQL, expression: label_code}]}
+            datatype: Integer
+            description: Official 4-5 digit "LC" code assigned to some labels.
+          - name: comment
+            expression: {dialects: [{dialect: ANSI_SQL, expression: comment}]}
+            datatype: String
+            ai_context: {synonyms: ["disambiguation"]}
+          - name: begin_date_year
+            expression: {dialects: [{dialect: ANSI_SQL, expression: begin_date_year}]}
+            datatype: Integer
+            dimension: {is_time: true}
+            ai_context: {synonyms: ["founded"]}
+          - name: end_date_year
+            expression: {dialects: [{dialect: ANSI_SQL, expression: end_date_year}]}
+            datatype: Integer
+            dimension: {is_time: true}
+            ai_context: {synonyms: ["closed", "defunct"]}
+          - name: ended
+            expression: {dialects: [{dialect: ANSI_SQL, expression: ended}]}
+            datatype: Boolean
+          # `type` and `area` are foreign keys into label_type and area;
+          # area is curated below, label_type is picked up by Stage 3.
+          - name: type
+            expression: {dialects: [{dialect: ANSI_SQL, expression: type}]}
+            datatype: Integer
+            description: "Foreign key into label_type (e.g. Original Production, Bootleg, Distributor)."
+          - name: area
+            expression: {dialects: [{dialect: ANSI_SQL, expression: area}]}
+            datatype: Integer
+            description: "Foreign key into area."
+
+      - name: area
+        source: musicbrainz.musicbrainz.area
+        primary_key: [id]
+        unique_keys: [[gid]]
+        description: A geographic area — country, subdivision, city, etc.
+        ai_context:
+          synonyms: ["country", "region", "location"]
+        fields:
+          - name: id
+            expression: {dialects: [{dialect: ANSI_SQL, expression: id}]}
+            datatype: Integer
+          - name: gid
+            expression: {dialects: [{dialect: ANSI_SQL, expression: gid}]}
+            datatype: String
+            ai_context: {synonyms: ["MBID", "musicbrainz id"]}
+          - name: name
+            expression: {dialects: [{dialect: ANSI_SQL, expression: name}]}
+            datatype: String
+            ai_context: {synonyms: ["country name", "region name"]}
+          # `type` is a foreign key into area_type (Country, Subdivision,
+          # City, District, Island, etc.) — picked up by Stage 3.
+          - name: type
+            expression: {dialects: [{dialect: ANSI_SQL, expression: type}]}
+            datatype: Integer
+            description: "Foreign key into area_type (Country, Subdivision, City, ...)."
+
+    relationships:
+      - {name: label_to_area, from: label, to: area, from_columns: [area], to_columns: [id]}
+      - {name: artist_to_area, from: artist, to: area, from_columns: [area], to_columns: [id]}
+
+    metrics:
+      - name: label_count
+        expression: {dialects: [{dialect: ANSI_SQL, expression: "COUNT(DISTINCT label.id)"}]}
+        description: Total number of distinct labels.
+        datatype: Integer
+        ai_context: {synonyms: ["number of labels", "how many labels"]}
+      - name: releases_per_label
+        expression: {dialects: [{dialect: ANSI_SQL, expression: "COUNT(DISTINCT release_label.release)::numeric / NULLIF(COUNT(DISTINCT label.id), 0)"}]}
+        description: Average number of releases issued per label.
+        datatype: Decimal

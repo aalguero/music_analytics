@@ -1,0 +1,69 @@
+version: "0.2.0.dev0"
+semantic_model:
+  - name: musicbrainz_recording
+    description: Recordings — a specific recorded performance/mix/edit, distinct from the abstract Work it performs and the Release(s)/Track(s) it appears on.
+    ai_context:
+      instructions: >
+        Use this for "how long is this track", "how many recordings" type
+        questions. A recording's length is in milliseconds. One recording
+        can appear on multiple releases via `track`.
+      synonyms: ["track", "song", "audio recording"]
+
+    datasets:
+      - name: recording
+        source: musicbrainz.musicbrainz.recording
+        primary_key: [id]
+        unique_keys: [[gid]]
+        description: A specific recorded performance, mix, or edit of a piece of music.
+        fields:
+          - name: id
+            expression: {dialects: [{dialect: ANSI_SQL, expression: id}]}
+            datatype: Integer
+          - name: gid
+            expression: {dialects: [{dialect: ANSI_SQL, expression: gid}]}
+            datatype: String
+            ai_context: {synonyms: ["MBID", "musicbrainz id"]}
+          - name: name
+            expression: {dialects: [{dialect: ANSI_SQL, expression: name}]}
+            datatype: String
+            ai_context: {synonyms: ["title", "track title", "song title"]}
+          - name: artist_credit
+            expression: {dialects: [{dialect: ANSI_SQL, expression: artist_credit}]}
+            datatype: Integer
+            description: "Foreign key into artist_credit — see artist.ossie.yaml."
+          - name: length
+            expression: {dialects: [{dialect: ANSI_SQL, expression: length}]}
+            datatype: Integer
+            description: Duration in milliseconds.
+            ai_context: {synonyms: ["duration", "runtime", "track length"]}
+          - name: video
+            expression: {dialects: [{dialect: ANSI_SQL, expression: video}]}
+            datatype: Boolean
+            description: True if this recording is a music video rather than audio-only.
+          - name: comment
+            expression: {dialects: [{dialect: ANSI_SQL, expression: comment}]}
+            datatype: String
+            ai_context: {synonyms: ["disambiguation"]}
+
+    relationships:
+      - name: recording_to_artist_credit
+        from: recording
+        to: artist_credit
+        from_columns: [artist_credit]
+        to_columns: [id]
+
+    metrics:
+      - name: recording_count
+        expression: {dialects: [{dialect: ANSI_SQL, expression: "COUNT(DISTINCT recording.id)"}]}
+        description: Total number of distinct recordings.
+        datatype: Integer
+        ai_context: {synonyms: ["number of recordings", "how many tracks"]}
+      - name: avg_length_minutes
+        expression: {dialects: [{dialect: ANSI_SQL, expression: "AVG(recording.length) / 60000.0"}]}
+        description: Average recording length in minutes.
+        datatype: Decimal
+        ai_context: {synonyms: ["average duration", "average track length"]}
+      - name: total_length_hours
+        expression: {dialects: [{dialect: ANSI_SQL, expression: "SUM(recording.length) / 3600000.0"}]}
+        description: Total combined length of recordings, in hours.
+        datatype: Decimal

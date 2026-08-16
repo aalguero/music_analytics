@@ -1,0 +1,136 @@
+# Ossie semantic model for MusicBrainz genres.
+#
+# MusicBrainz genres are a curated entity (not free-text tags): a `genre`
+# row plus per-entity link tables (l_artist_genre, l_genre_recording,
+# l_genre_release, l_genre_release_group) that associate a genre with an
+# artist/recording/release/release_group. Unlike the folksonomy `*_tag`
+# tables, these carry no vote count — presence of a row means the genre
+# applies. Cross-file relationships below point at datasets owned by
+# artist.ossie.yaml / recording.ossie.yaml / release.ossie.yaml /
+# release_group.ossie.yaml — see the note at the top of artist.ossie.yaml.
+version: "0.2.0.dev0"
+semantic_model:
+  - name: musicbrainz_genre
+    description: Music genres and their associations to artists, recordings, releases, and release groups.
+    ai_context:
+      instructions: >
+        Use this model to answer genre questions ("what genre is X",
+        "how many recordings are tagged jazz"). Genre is linked to an entity
+        through the l_genre_* (or l_artist_genre) bridge tables — always
+        join through one of those rather than expecting a `genre` column
+        directly on artist/recording/release.
+      synonyms: ["style", "musical genre", "music style"]
+
+    datasets:
+      - name: genre
+        source: musicbrainz.musicbrainz.genre
+        primary_key: [id]
+        unique_keys: [[gid]]
+        description: A curated music genre (e.g. "jazz", "synthpop").
+        fields:
+          - name: id
+            expression: {dialects: [{dialect: ANSI_SQL, expression: id}]}
+            datatype: Integer
+          - name: gid
+            expression: {dialects: [{dialect: ANSI_SQL, expression: gid}]}
+            datatype: String
+            ai_context: {synonyms: ["MBID", "musicbrainz id"]}
+          - name: name
+            expression: {dialects: [{dialect: ANSI_SQL, expression: name}]}
+            datatype: String
+          - name: comment
+            expression: {dialects: [{dialect: ANSI_SQL, expression: comment}]}
+            datatype: String
+            ai_context: {synonyms: ["disambiguation"]}
+
+      - name: l_artist_genre
+        source: musicbrainz.musicbrainz.l_artist_genre
+        primary_key: [id]
+        description: Links an artist to a genre associated with them.
+        fields:
+          - name: id
+            expression: {dialects: [{dialect: ANSI_SQL, expression: id}]}
+            datatype: Integer
+          - name: entity0
+            expression: {dialects: [{dialect: ANSI_SQL, expression: entity0}]}
+            datatype: Integer
+            description: References artist.id.
+          - name: entity1
+            expression: {dialects: [{dialect: ANSI_SQL, expression: entity1}]}
+            datatype: Integer
+            description: References genre.id.
+
+      - name: l_genre_recording
+        source: musicbrainz.musicbrainz.l_genre_recording
+        primary_key: [id]
+        description: Links a recording to a genre.
+        fields:
+          - name: id
+            expression: {dialects: [{dialect: ANSI_SQL, expression: id}]}
+            datatype: Integer
+          - name: entity0
+            expression: {dialects: [{dialect: ANSI_SQL, expression: entity0}]}
+            datatype: Integer
+            description: References genre.id.
+          - name: entity1
+            expression: {dialects: [{dialect: ANSI_SQL, expression: entity1}]}
+            datatype: Integer
+            description: References recording.id.
+
+      - name: l_genre_release
+        source: musicbrainz.musicbrainz.l_genre_release
+        primary_key: [id]
+        description: Links a release to a genre.
+        fields:
+          - name: id
+            expression: {dialects: [{dialect: ANSI_SQL, expression: id}]}
+            datatype: Integer
+          - name: entity0
+            expression: {dialects: [{dialect: ANSI_SQL, expression: entity0}]}
+            datatype: Integer
+            description: References genre.id.
+          - name: entity1
+            expression: {dialects: [{dialect: ANSI_SQL, expression: entity1}]}
+            datatype: Integer
+            description: References release.id.
+
+      - name: l_genre_release_group
+        source: musicbrainz.musicbrainz.l_genre_release_group
+        primary_key: [id]
+        description: Links a release group (album/single/etc.) to a genre.
+        fields:
+          - name: id
+            expression: {dialects: [{dialect: ANSI_SQL, expression: id}]}
+            datatype: Integer
+          - name: entity0
+            expression: {dialects: [{dialect: ANSI_SQL, expression: entity0}]}
+            datatype: Integer
+            description: References genre.id.
+          - name: entity1
+            expression: {dialects: [{dialect: ANSI_SQL, expression: entity1}]}
+            datatype: Integer
+            description: References release_group.id.
+
+    relationships:
+      - {name: l_artist_genre_to_artist, from: l_artist_genre, to: artist, from_columns: [entity0], to_columns: [id]}
+      - {name: l_artist_genre_to_genre, from: l_artist_genre, to: genre, from_columns: [entity1], to_columns: [id]}
+      - {name: l_genre_recording_to_genre, from: l_genre_recording, to: genre, from_columns: [entity0], to_columns: [id]}
+      - {name: l_genre_recording_to_recording, from: l_genre_recording, to: recording, from_columns: [entity1], to_columns: [id]}
+      - {name: l_genre_release_to_genre, from: l_genre_release, to: genre, from_columns: [entity0], to_columns: [id]}
+      - {name: l_genre_release_to_release, from: l_genre_release, to: release, from_columns: [entity1], to_columns: [id]}
+      - {name: l_genre_release_group_to_genre, from: l_genre_release_group, to: genre, from_columns: [entity0], to_columns: [id]}
+      - {name: l_genre_release_group_to_release_group, from: l_genre_release_group, to: release_group, from_columns: [entity1], to_columns: [id]}
+
+    metrics:
+      - name: genre_count
+        expression: {dialects: [{dialect: ANSI_SQL, expression: "COUNT(DISTINCT genre.id)"}]}
+        description: Total number of distinct curated genres.
+        datatype: Integer
+      - name: tagged_release_group_count
+        expression: {dialects: [{dialect: ANSI_SQL, expression: "COUNT(DISTINCT l_genre_release_group.entity1)"}]}
+        description: Number of distinct release groups that have at least one genre assigned.
+        datatype: Integer
+      - name: tagged_recording_count
+        expression: {dialects: [{dialect: ANSI_SQL, expression: "COUNT(DISTINCT l_genre_recording.entity1)"}]}
+        description: Number of distinct recordings that have at least one genre assigned.
+        datatype: Integer

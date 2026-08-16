@@ -1,0 +1,98 @@
+# Also models `artist_release_group`, a materialized table analogous to
+# artist_release in release.ossie.yaml (same file-level comment there
+# explains why: the join-through-artist_credit path measured over 60s on
+# the real full database for an unfiltered aggregate, this measures ~8.6s
+# and is shorter so sql_builder.py prefers it automatically).
+version: "0.2.0.dev0"
+semantic_model:
+  - name: musicbrainz_release_group
+    description: Release groups (the abstract "album" concept spanning all its country/format editions) grouped by artist and primary type.
+    ai_context:
+      instructions: >
+        Use this for "album"-level questions that shouldn't be split per
+        country/edition (that's `release`). One release_group can have many
+        releases (e.g. US CD, EU vinyl, digital reissue).
+      synonyms: ["album", "single", "EP", "release group"]
+
+    datasets:
+      - name: release_group
+        source: musicbrainz.musicbrainz.release_group
+        primary_key: [id]
+        unique_keys: [[gid]]
+        description: The abstract grouping of all editions/releases of what a listener would call one album/single/EP.
+        fields:
+          - name: id
+            expression: {dialects: [{dialect: ANSI_SQL, expression: id}]}
+            datatype: Integer
+          - name: gid
+            expression: {dialects: [{dialect: ANSI_SQL, expression: gid}]}
+            datatype: String
+            ai_context: {synonyms: ["MBID", "musicbrainz id"]}
+          - name: name
+            expression: {dialects: [{dialect: ANSI_SQL, expression: name}]}
+            datatype: String
+            ai_context: {synonyms: ["title", "album title"]}
+          - name: artist_credit
+            expression: {dialects: [{dialect: ANSI_SQL, expression: artist_credit}]}
+            datatype: Integer
+            description: "Foreign key into artist_credit — see artist.ossie.yaml."
+          - name: comment
+            expression: {dialects: [{dialect: ANSI_SQL, expression: comment}]}
+            datatype: String
+            ai_context: {synonyms: ["disambiguation"]}
+          # `type` is a foreign key into release_group_primary_type
+          # (Album, Single, EP, Broadcast, Other) — not curated here;
+          # picked up by Stage 3 auto-generation.
+          - name: type
+            expression: {dialects: [{dialect: ANSI_SQL, expression: type}]}
+            datatype: Integer
+            description: "Foreign key into release_group_primary_type (Album, Single, EP, Broadcast, Other)."
+            ai_context: {synonyms: ["album type", "release type"]}
+
+      - name: artist_release_group
+        source: musicbrainz.musicbrainz.artist_release_group
+        description: >
+          Materialized one-row-per-(artist, release_group) mapping. See the
+          artist_release note in release.ossie.yaml — same rationale.
+        ai_context:
+          instructions: >
+            Prefer this over joining through artist_credit for simple
+            "how many albums does artist X have" style aggregation.
+        fields:
+          - name: artist
+            expression: {dialects: [{dialect: ANSI_SQL, expression: artist}]}
+            datatype: Integer
+          - name: release_group
+            expression: {dialects: [{dialect: ANSI_SQL, expression: release_group}]}
+            datatype: Integer
+          - name: is_track_artist
+            expression: {dialects: [{dialect: ANSI_SQL, expression: is_track_artist}]}
+            datatype: Boolean
+
+    relationships:
+      - name: release_group_to_artist_credit
+        from: release_group
+        to: artist_credit
+        from_columns: [artist_credit]
+        to_columns: [id]
+      - name: artist_release_group_to_release_group
+        from: artist_release_group
+        to: release_group
+        from_columns: [release_group]
+        to_columns: [id]
+      - name: artist_release_group_to_artist
+        from: artist_release_group
+        to: artist
+        from_columns: [artist]
+        to_columns: [id]
+
+    metrics:
+      - name: release_group_count
+        expression: {dialects: [{dialect: ANSI_SQL, expression: "COUNT(DISTINCT release_group.id)"}]}
+        description: Total number of distinct release groups (albums/singles/EPs).
+        datatype: Integer
+        ai_context: {synonyms: ["number of albums", "how many albums"]}
+      - name: avg_editions_per_release_group
+        expression: {dialects: [{dialect: ANSI_SQL, expression: "COUNT(DISTINCT release.id)::numeric / NULLIF(COUNT(DISTINCT release_group.id), 0)"}]}
+        description: Average number of release editions (country/format variants) per release group.
+        datatype: Decimal

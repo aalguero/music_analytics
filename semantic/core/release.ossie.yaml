@@ -1,0 +1,215 @@
+# Ossie semantic model for MusicBrainz releases.
+#
+# MusicBrainz doesn't put a release date directly on the `release` row —
+# a release can come out on different dates in different countries, so
+# dates live in `release_country` (per-country) with `release_unknown_country`
+# as the fallback for releases whose country isn't known. Both are modeled
+# here as first-class time dimensions rather than skipped.
+#
+# Also models `artist_release`, a materialized table (built by
+# ./admin/BuildMaterializedTables, not created by InitDb.pl itself) that
+# flattens release <-> artist into one row per pair. Discovered mid-project,
+# against the real full database, that the "obvious" path — release ->
+# artist_credit -> artist_credit_name -> artist — took *over 60 seconds*
+# for an unfiltered aggregate (e.g. "releases per artist") on the real
+# ~5.7M-row release table, and in fact contributed to a full Postgres
+# shutdown under memory pressure during testing. artist_release answers the
+# same question in ~8.6s (single table, no 3-way join) and is also more
+# correct: it includes artists credited only at the track level (e.g. on
+# various-artist compilations), which artist_credit_name alone misses. It's
+# a strictly shorter path (2 hops vs 3) between the same two datasets, so
+# sql_builder.py's shortest-path-among-core-relationships search prefers it
+# automatically — the artist_credit_name path still exists and is still
+# used when a query needs artist_credit-specific detail (credit string,
+# join_phrase, position) that artist_release doesn't carry.
+version: "0.2.0.dev0"
+semantic_model:
+  - name: musicbrainz_release
+    description: Releases (a specific purchasable/issuable version of a release group, e.g. one country's CD pressing) and their dates, labels, and packaging.
+    ai_context:
+      instructions: >
+        Use this model for "when was X released" and "how many releases"
+        style questions. Release dates come from release_country (per
+        country) or release_unknown_country (no country recorded) — prefer
+        release_country.date_year for "what year did X come out" questions
+        since it's the common case.
+      synonyms: ["album release", "pressing", "edition"]
+
+    datasets:
+      - name: release
+        source: musicbrainz.musicbrainz.release
+        primary_key: [id]
+        unique_keys: [[gid]]
+        description: A specific released version of a release group (e.g. a particular CD/vinyl/digital edition).
+        ai_context:
+          synonyms: ["album", "record", "pressing", "edition"]
+        fields:
+          - name: id
+            expression: {dialects: [{dialect: ANSI_SQL, expression: id}]}
+            datatype: Integer
+          - name: gid
+            expression: {dialects: [{dialect: ANSI_SQL, expression: gid}]}
+            datatype: String
+            ai_context: {synonyms: ["MBID", "musicbrainz id"]}
+          - name: name
+            expression: {dialects: [{dialect: ANSI_SQL, expression: name}]}
+            datatype: String
+            ai_context: {synonyms: ["title", "album title"]}
+          - name: artist_credit
+            expression: {dialects: [{dialect: ANSI_SQL, expression: artist_credit}]}
+            datatype: Integer
+            description: "Foreign key into artist_credit — see artist.ossie.yaml."
+          - name: release_group
+            expression: {dialects: [{dialect: ANSI_SQL, expression: release_group}]}
+            datatype: Integer
+            description: "Foreign key into release_group — see release_group.ossie.yaml."
+          - name: barcode
+            expression: {dialects: [{dialect: ANSI_SQL, expression: barcode}]}
+            datatype: String
+          - name: comment
+            expression: {dialects: [{dialect: ANSI_SQL, expression: comment}]}
+            datatype: String
+            ai_context: {synonyms: ["disambiguation"]}
+          # status/packaging/language/script are foreign keys into small
+          # vocabulary tables (release_status, release_packaging, language,
+          # script) — not curated here; picked up by Stage 3 auto-generation.
+          - name: status
+            expression: {dialects: [{dialect: ANSI_SQL, expression: status}]}
+            datatype: Integer
+            description: "Foreign key into release_status (e.g. Official, Promotional, Bootleg)."
+          - name: packaging
+            expression: {dialects: [{dialect: ANSI_SQL, expression: packaging}]}
+            datatype: Integer
+            description: "Foreign key into release_packaging (e.g. Jewel Case, Digipak)."
+          - name: language
+            expression: {dialects: [{dialect: ANSI_SQL, expression: language}]}
+            datatype: Integer
+            description: "Foreign key into language (of the release's track titles)."
+          - name: script
+            expression: {dialects: [{dialect: ANSI_SQL, expression: script}]}
+            datatype: Integer
+            description: "Foreign key into script (writing system of track titles)."
+
+      - name: release_country
+        source: musicbrainz.musicbrainz.release_country
+        primary_key: [release, country]
+        description: The date a release came out in a specific country. A release can have one row per country it was issued in.
+        ai_context:
+          synonyms: ["release date", "release year"]
+        fields:
+          - name: release
+            expression: {dialects: [{dialect: ANSI_SQL, expression: release}]}
+            datatype: Integer
+          - name: country
+            expression: {dialects: [{dialect: ANSI_SQL, expression: country}]}
+            datatype: Integer
+            description: "Foreign key into area (the country of this release date)."
+          - name: date_year
+            expression: {dialects: [{dialect: ANSI_SQL, expression: date_year}]}
+            datatype: Integer
+            dimension: {is_time: true}
+            ai_context: {synonyms: ["release year", "year released"]}
+          - name: date_month
+            expression: {dialects: [{dialect: ANSI_SQL, expression: date_month}]}
+            datatype: Integer
+            dimension: {is_time: false}
+          - name: date_day
+            expression: {dialects: [{dialect: ANSI_SQL, expression: date_day}]}
+            datatype: Integer
+            dimension: {is_time: false}
+
+      - name: release_unknown_country
+        source: musicbrainz.musicbrainz.release_unknown_country
+        primary_key: [release]
+        description: Release date for a release whose country isn't known/recorded. Fallback for releases missing a release_country row.
+        fields:
+          - name: release
+            expression: {dialects: [{dialect: ANSI_SQL, expression: release}]}
+            datatype: Integer
+          - name: date_year
+            expression: {dialects: [{dialect: ANSI_SQL, expression: date_year}]}
+            datatype: Integer
+            dimension: {is_time: true}
+          - name: date_month
+            expression: {dialects: [{dialect: ANSI_SQL, expression: date_month}]}
+            datatype: Integer
+            dimension: {is_time: false}
+          - name: date_day
+            expression: {dialects: [{dialect: ANSI_SQL, expression: date_day}]}
+            datatype: Integer
+            dimension: {is_time: false}
+
+      - name: release_label
+        source: musicbrainz.musicbrainz.release_label
+        primary_key: [id]
+        description: Links a release to the label(s) that issued it, with the catalog number used.
+        fields:
+          - name: id
+            expression: {dialects: [{dialect: ANSI_SQL, expression: id}]}
+            datatype: Integer
+          - name: release
+            expression: {dialects: [{dialect: ANSI_SQL, expression: release}]}
+            datatype: Integer
+          - name: label
+            expression: {dialects: [{dialect: ANSI_SQL, expression: label}]}
+            datatype: Integer
+            description: "Foreign key into label — see label.ossie.yaml."
+          - name: catalog_number
+            expression: {dialects: [{dialect: ANSI_SQL, expression: catalog_number}]}
+            datatype: String
+
+      - name: artist_release
+        source: musicbrainz.musicbrainz.artist_release
+        description: >
+          Materialized one-row-per-(artist, release) mapping, precomputed by
+          BuildMaterializedTables for fast artist<->release aggregation.
+          Includes track-only artist credits that artist_credit_name misses.
+          See the file-level comment above for why this exists.
+        ai_context:
+          instructions: >
+            Prefer this over joining through artist_credit/artist_credit_name
+            for simple "how many releases does artist X have" style
+            aggregation — it's both faster and more complete. Use
+            artist_credit_name instead only when you need the actual credit
+            string, join_phrase, or position within a multi-artist credit.
+        fields:
+          - name: artist
+            expression: {dialects: [{dialect: ANSI_SQL, expression: artist}]}
+            datatype: Integer
+          - name: release
+            expression: {dialects: [{dialect: ANSI_SQL, expression: release}]}
+            datatype: Integer
+          - name: is_track_artist
+            expression: {dialects: [{dialect: ANSI_SQL, expression: is_track_artist}]}
+            datatype: Boolean
+            description: True if this artist is credited only at the track level, not on the release itself.
+          - name: first_release_date
+            expression: {dialects: [{dialect: ANSI_SQL, expression: first_release_date}]}
+            datatype: Integer
+            description: "Packed internal sort key (not a real date/year) for the release group's first release date — do not use for date filtering or display."
+
+    relationships:
+      - {name: release_country_to_release, from: release_country, to: release, from_columns: [release], to_columns: [id]}
+      - {name: release_unknown_country_to_release, from: release_unknown_country, to: release, from_columns: [release], to_columns: [id]}
+      - {name: release_label_to_release, from: release_label, to: release, from_columns: [release], to_columns: [id]}
+      - {name: release_label_to_label, from: release_label, to: label, from_columns: [label], to_columns: [id]}
+      - {name: release_to_release_group, from: release, to: release_group, from_columns: [release_group], to_columns: [id]}
+      - {name: release_to_artist_credit, from: release, to: artist_credit, from_columns: [artist_credit], to_columns: [id]}
+      - {name: artist_release_to_release, from: artist_release, to: release, from_columns: [release], to_columns: [id]}
+      - {name: artist_release_to_artist, from: artist_release, to: artist, from_columns: [artist], to_columns: [id]}
+
+    metrics:
+      - name: release_count
+        expression: {dialects: [{dialect: ANSI_SQL, expression: "COUNT(DISTINCT release.id)"}]}
+        description: Total number of distinct releases.
+        datatype: Integer
+        ai_context: {synonyms: ["number of releases", "how many releases"]}
+      - name: earliest_release_year
+        expression: {dialects: [{dialect: ANSI_SQL, expression: "MIN(release_country.date_year)"}]}
+        description: Earliest known release year among releases with a known country.
+        datatype: Integer
+        ai_context: {synonyms: ["first released", "debut year"]}
+      - name: latest_release_year
+        expression: {dialects: [{dialect: ANSI_SQL, expression: "MAX(release_country.date_year)"}]}
+        description: Most recent known release year among releases with a known country.
+        datatype: Integer
